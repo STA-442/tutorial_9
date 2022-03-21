@@ -1,0 +1,696 @@
+---
+title: ""
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+---
+
+```{r setup, include=FALSE}
+## Global options
+knitr::opts_chunk$set(cache = TRUE, warning = F, message=F)
+```
+
+
+## Principles of Survival Analysis
+
+
+Recall that the survival and hazard functions are given by
+
+$$S(t) = Pr(T >=t), 0 < t < \infty$$
+
+and
+
+$$h(t) = \lim_{\Delta\to 0} \frac{pr(t < T < t + \Delta |T > t)}{\Delta}$$
+These functions are two ways to express the survival distribution. 
+
+
+### Example of survival in US males/females
+
+The data `survival::survexp.us` contains daily hazards rates of men and women by age, every year from 1940-2004. Note that this object is a 3 dimensional array and not a data.frame. use `str()` to understand more about this object. 
+
+
+```{r}
+# load the required libraries
+library(tidyverse)
+library(survival)
+library(gt)
+# load the data
+us_survival <- survival::survexp.us
+
+# understand the object
+str(us_survival)
+
+# what clas is it
+class(us_survival)
+
+# what kind of data is contained in each dimension
+dimnames(us_survival)
+
+# use ?survival::ratetable to understand more about this 
+```
+
+We can use array notation to extract the hazards for males and females. For example to extract the hazards in 1950:
+
+
+```{r}
+
+hazard_male <- us_survival[, "male", '1950']
+hazard_female <- us_survival[, "female", '1950']
+
+time_series <- c(as.numeric(dimnames(us_survival)$age)) # subsequent years
+
+
+```
+
+The time_series object above contains the times that the hazards apply to. If we know the hazards, we can calculate the survival function using the following equation
+
+$$S(t) = exp\Big(- \int_{0}^{t}h(u)du\Big)=exp(-H(t))$$
+
+Where $H(t)$ is the cumulative hazard function
+
+$$H(t) = \int_{0}^{t}h(u)du$$
+
+Since the data set we loaded contains the hazards, we can calculate the survival function
+
+
+```{r}
+
+time_series_diff <- c(0, diff(time_series))
+survival_male <- exp(-cumsum(hazard_male*time_series_diff)*365.24)
+survival_female <- exp(-cumsum(hazard_female*time_series_diff)*365.24)
+
+surv_df <- data.frame(time = time_series, 
+                      time_series_diff = time_series_diff,
+                      survival = survival_male, 
+                      type = "male") %>% 
+  bind_rows(data.frame(time = time_series, 
+                       time_series_diff = time_series_diff,
+                       survival = survival_female, 
+                       type = "female"))
+
+
+surv_df %>% 
+  ggplot(aes(time, survival, color = type)) +
+  geom_line() + 
+  labs(x = "Time in years",
+       y = "Survival",
+       title = "Survival distribution in the US",
+       subtitle = "1950")
+```
+
+We can also calculate the mean survival as the expected value of the survival time
+
+$$\mu = E(T) = \int_{0}^{\infty} t\cdot f(t) dt$$
+
+where 
+
+$$f(t) = -\frac{d}{dt}S(t = \frac{d}{dt} F(t))$$
+
+and 
+
+$$F(t) = pr(T \le t)$$
+
+We can use integration by parts to show that
+
+$$\mu = \int_{0}^{\infty} S(t) dt$$
+
+Therefore, to calculate the expected survival for males and females, we can do the following
+
+
+```{r}
+surv_df %>% 
+  group_by(type) %>% 
+  summarize(expected_value = sum(survival*time_series_diff)) %>% 
+  gt() %>% 
+  tab_header(title = "Expected age in US in 1950 by gender")
+
+
+```
+
+## Kaplan Meier Estimator
+
+We saw in class that the Kaplan Meier estimator, wich is a non-parametric estimator for the survival function is given by:
+
+$$\hat{S}(t) = \prod_{t \le T} (1 - \frac{d_i}{n_i})$$
+
+Where n_i is the number of subjects at risk at time $t_i$ and $d_i$ is the number who rail at time $t_i$. We call this estimator the product limit estimator. We can obtain confidence intervals using the delta method (which give the variance of $log(\hat{S}(t))$)
+
+
+$$var(log(\hat{S}(t))) = \sum_{t_i < t} \frac{d_j}{n_j(n_j - d_j)}$$
+
+We use the delta method again to get the variance of S(t) itself
+
+
+$$var(\hat{S}(t)) \approx \hat{S}(t)^2 \cdot \sum_{t_i < t} \frac{d_i}{n_j(n_i - d_i)}$$
+
+Using this to obtain confidence intervals, we can often get confidence interval estimates that fall above 1 or below zero. To get around this, we often calculate confidence intervals using the complementary log-log transformation
+
+$$var(log(-log(\hat{S}(t)))) \approx \frac{1}{log(\hat{S}(t))^2}\sum_{t_i < t} \frac{d_i}{n_i(n_i - d_i)}$$
+
+
+Let's see an example using some fake data.
+
+
+```{r}
+#library that contains the autoplot function
+library(ggfortify)
+# Create the data
+surv_data <- tribble(
+  ~ time, ~ event,
+  7, 0,
+  6, 1,
+  6, 0,
+  5, 0,
+  2, 1,
+  4,1
+)
+
+# create a survival object
+surv_obj <- Surv(surv_data$time, surv_data$event)
+
+# print the object
+print(surv_obj)
+
+km_estimate_1 <- survfit(surv_obj ~ 1)
+km_estimate_2 <- survfit(surv_obj ~ 1, conf.type="log-log")
+
+# summary 
+summary(km_estimate_1)
+summary(km_estimate_2)
+
+p1 <- autoplot(km_estimate_1)
+p2 <- autoplot(km_estimate_2) +
+  labs(title = "comp-log-log transformation")
+cowplot::plot_grid(p1, p2)
+
+```
+
+Notice the difference in the upper and lower tails of the confidence interval using the complimentary log log transformation.
+
+
+## Comparison of survival times (non-parametric)
+
+Testing the equivalence of two groups is a familiar problem in statistics. We are interested in testing a null hypothesis that two population means are equal versus an alternative that the means are not equal (for a two-sided test) or that the mean for one group is greater than that for a another group (one-sided test).
+
+We can make parametric assumptions about $S(t)$, but this isn't always a reasonable assumption with survival data. We may think to construct a test like the following:
+
+$$H_0: S_1(t) = S_0(t)$$
+
+$$H_A: S_1(t) \neq S_0(t)$$
+
+But what if $S_1(t)$ and $S_2(t)$ are similar for some values of $t$ but different for others. Another scenario you see in practice is where the survival distributions cross!
+
+Instead, we use what is known as a log-rank test:
+
+$$\chi^2 = \sum\frac{(O_{t,j} - E_{t,j})^2}{E_{t,j}}$$
+
+In the above, $j$ indexes the groups and $t$ indexes time, $O_{t,j}$ are the observed number of events for the $j^{th}$ group and $E_{t,j}$ are the expected number of events.
+
+These are calculated for two groups (j = 1, 2) as 
+
+$$E_{1t} = N_{1t}\cdot(O_t/N_t)$$
+
+where 
+
+- $N_t = N_{1t} + N_{2t}$ (the total number at risk)
+- $O_t = O_{1t} + O_{2t}$ (the total observed events at time t)
+
+
+
+The log rank statistic has degrees of freedom equal to $k-1$, where $k$ represents the number of comparison groups.
+
+Let's compute this in R using our ovarian data example (from last week)
+
+
+```{r}
+
+ovarian <- survival::ovarian
+
+survival_diff <- survdiff(Surv(futime, fustat) ~ rx, data = ovarian)
+survival_diff
+```
+
+Here we have a p-value of 0.3, and we do not reject he null hypothesis that the survival curves are the same. Not surprising given the very small sample size. We can plot the two survival curves with confidence intervals. 
+
+```{r}
+
+ovarian <- survival::ovarian
+
+km <- survfit(Surv(futime, fustat) ~ rx, data = ovarian, conf.type="log-log")
+autoplot(km)
+```
+
+
+
+### Stratified test
+
+What if we want to control for additional covariates, like we do with a regression models? We often want to control for things like
+
+- age group
+- gender
+- education
+- diet
+- socioeconomic status
+
+There are two approaches:
+
+1. Include other covariates as regression terms in a model for the hazard function (i.e. cox proportional hazards model below)
+2. If we have a covariate with a small number of grouping levels, we can use a stratified log-rank test
+
+
+In this case we test the null hypothesis
+
+$$H_0: h_{0j}  = h_{1j} \text{, for j = 1, 2, ..., G}$$
+
+Where $j$ is indexing over the levels of some second grouping variable. 
+
+
+Let's look at an example using data on a trial to assess thearapy versus using a patch on smoking cessation. This dataset can be found the `asaur` R package, but I have saved a version of it here in the data folder. 
+
+We are interested in the time in days until relapse variable (`ttr`). The event indicator is given by the `relapse` variable. We are going to test the effect of treatment (variable `grp`), and then stratify by age group (`ageGroup2`: Age group with levels 21-49 or 50+). 
+
+
+
+
+```{r}
+# load the data
+smoking <- readr::read_csv('data/smoking.csv')
+
+# fit a kaplan meier estimator
+km <- survfit(Surv(ttr, relapse) ~ grp, data = smoking)
+
+# plot the survival curves
+autoplot(km)
+```
+
+We see a fair bit of separation in the curves. Let's do a log-rank test
+
+
+```{r}
+log_rank_test <- survdiff(Surv(ttr, relapse) ~ grp, data = smoking)
+log_rank_test
+```
+
+Here we reject the null that the groups are the same. 
+
+If we are concerned that the effect may differ by age (those older than 50 vs those younger than 50) we can performed the stratified test.
+
+
+```{r}
+strat_log_rank_test <- survdiff(Surv(ttr, relapse) ~ grp + strata(ageGroup2), data = smoking)
+strat_log_rank_test
+```
+
+Note the use of the function `strata()` when speficying the variable to stratify. 
+
+The chi-square test  differs only slightly from the unadjusted value,indicating that it was not necessary to stratify on this variable.
+
+
+## Proportional hazards model
+
+Here we introduce the proportional hazards assumption:
+
+$$h_1(t) = \psi\cdot h_0(t)$$
+
+Which relates the hazard of one time to event function ($h_1(t)$) proportionally to some other hazard function ($h_0(t)$) via some parameter $\psi$. 
+
+This leads us to one of the most widely used survival method techniques in quantifying the difference between two hazard functions - the cox proportional hazards model. 
+
+This proportional hazards model will allow us to ﬁt regression models to censored survival data, like we do with linear and logistic regression. 
+
+We express the model as
+
+$$h(t) = h_0(t)\times exp(\beta_1 x_s + \ldots \beta_p x_p)$$
+
+
+
+- We call $h_0(t)$ the **baseline hazard**. That is the hazard when all of our inputs are set to 0. 
+- As with usual regression, the $\beta$ coefficient measure the impact of each of our inputs on the hazard. Effects greater than 0 indicate an increased hazard (greater likelihood of failure), while negative coefficients indicate a decreased hazard (lesser likelihood of failure).
+- We can exponential our $\beta$ coefficients to obtain hazard ratios, similarl to how we exponential log-odds to obtain odds ratios. 
+
+Imagine we have fit a model and want to compare two subjects, (subject1 and subject2) on their survival. 
+
+
+The hazard for subject1 is:
+
+$$h_1(t) = h_0(t)exp(\sum_{i=p}^n \beta_p x_{1,p})$$
+
+The hazard for subject2 is:
+
+$$h_2(t) = h_0(t)exp(\sum_{i=p}^n \beta_p x_{2,p})$$
+The hazard ratio between the two subjects is
+$$\frac{h_2(t)}{h_1(t)} = \frac{ h_0(t)exp(\sum_{i=p}^n \beta_p x_{1,p})}{ h_0(t)exp(\sum_{i=p}^n \beta_p x_{2,p})} = \frac{exp(\sum_{i=p}^n \beta_p x_{1,p})}{exp(\sum_{i=p}^n \beta_p x_{2,p})}$$
+
+That is, it is independent of time! For example if subject two has 2 times the risk of death at baseline, then subject 2 will have 2 times the risk of death for all times $t$.
+
+Let's look at an example using the smoking data we have loaded. We use the `coxph()` function from the `survival` package
+
+
+```{r}
+cox_model <- coxph(Surv(ttr, relapse) ~ factor(grp), data = smoking)
+
+summary(cox_model)
+```
+
+Notice that by default, the `summary()` function displays coefficients on their original scale and in hazard ratios. Notice that we get 3 model hypothesis tests:
+
+- Likelihood ratio test
+- Wald test
+- Score test
+
+
+Because we don't make any parametric assumptions about the survival curve, we use something called partial likelihood to estimate the regression parameters. We will go into further details in class (but not here). Suffice to say that all 3 tests generally give similar results.
+
+We can visualize the results using the `ggsurvplot()` function from the `survminer` package.
+
+
+```{r}
+library(survminer)
+ggsurvplot(survfit(cox_model, data = smoking))
+```
+
+You might say, hey what is going on here. There is only one curve, but I put a treatment covariate in the data. By default, the `ggsurvplot` estimates the survival at the mean value of all covariates. We can specify new data if we want to see the survival curves by our grouping covariate we can use the `ggadjustedcurves()` function. We have to pass new data and specify the grouping variable
+
+
+
+```{r}
+library(survminer)
+new_df <- data.frame(grp = c("combination", "patchOnly"))
+ggadjustedcurves(cox_model, variable = "grp", data = new_df)
+```
+
+
+
+- Interpretation: Those using patch only have 1.831 times the hazard (95% CI: 1.20-2.98)  of relapse at any time $t$
+
+We can control for another covariate as follows:
+
+
+```{r}
+
+cox_model2 <- coxph(Surv(ttr, relapse) ~ factor(grp) + ageGroup2, data = smoking)
+
+summary(cox_model2)
+```
+
+Here we have controled for age grouping (>50 vs <= 50). Again, we can generate plots:
+
+
+```{r}
+
+ggadjustedcurves(cox_model2, 
+                 method = "average", 
+                 variable = "grp",
+                 data = as.data.frame(smoking))
+
+```
+
+Notice that this time, we used the original data but passed in a method. This says to use the average values from the other model covariates when generating the survival curves. (just to show you 2 ways to do this).
+
+- Interpretation of treatment: while controlling for age grouping, those using the patch had 1.78 times the hazard of relapse.
+- Interpretation of age: while controlling for treatment, those that are 50+ had a 50% reduction in the hazard of relapse. 
+- Both effects are statistically significant at the $\alpha=0.05$ level. 
+
+
+## Model comparison and diagnostics
+
+Let's fit 3 models using the smoking data:
+
+- Model A: we include agegroup4
+- Model B: we include employment
+- Model C: we include agegroup4 and employment
+
+So, Model's A and B are not nested, while models and and B are both nested in model C.
+
+- agegroup4 is a factor with 4 levels: 21-34, 35-49, 50-64, or 65+
+- employment is a factor with 3 levels: ft (full-time), pt (part-time), or other
+
+
+```{r}
+model_a <- coxph(Surv(ttr, relapse) ~ ageGroup4, data = smoking)
+model_b <- coxph(Surv(ttr, relapse) ~ employment, data = smoking)
+model_c <- coxph(Surv(ttr, relapse) ~ ageGroup4 + employment, data = smoking)
+
+
+summary(model_a)
+summary(model_b)
+summary(model_c)
+```
+
+
+We see a significant effect in the last model. We cannot easily see from these p-values whether or not the term `ageGroup4` or the term `employment` belong in the model. These we can assess using a (partial) likelihood ratio test. The log-likelihoods for the three models are as follows
+
+
+```{r}
+# log-likelihood from model A
+logLik(model_a)
+
+# log-likelihood from model B
+logLik(model_b)
+
+# log-likelihood from model C
+logLik(model_c)
+```
+
+
+Let's first test if agegroup4 belongs in the model by calculating the test statistic:
+
+$$2(ll(\text{model_c)} - ll(\text{model_a})$$
+```{r}
+# log-likelihood from model A
+lrt <- 2*(logLik(model_c) - logLik(model_a))
+as.numeric(lrt)
+pchisq(as.numeric(lrt), df=2, lower.tail=F)
+```
+
+So we get a value of `r as.numeric(lrt)` with we test at 5-3=2 degrees of freedom. Here we conclude that adding employment does not improve model fit. 
+
+
+We can use the anova function in R to run this test as well
+
+
+```{r}
+anova(model_a, model_c)
+
+```
+
+To compare non-nested models, we can calculate the AIC as we have done before
+
+```{r}
+AIC(model_a)
+AIC(model_b)
+AIC(model_c)
+```
+
+Model C has the lowest AIC, however it is very similar to that of model A, and with the added complexity of including an additional predictor, we would go with the simpler model A. 
+
+
+We can fit a stepwise model as we have done with other models
+
+
+```{r}
+full_model <- coxph(Surv(ttr, relapse) ~ grp + gender +
+                          race+ employment + yearsSmoking + 
+                          levelSmoking +ageGroup4 + priorAttempts + 
+                          longestNoSmoke, data = smoking)
+
+step_model <- step(full_model, lower=~grp, trace=F) 
+summary(step_model)
+```
+
+
+The argument `lower = ~grp`, says that grp must be included in our final model. 
+
+
+## Model diagnostics
+
+To assess the goodness of ﬁt of a model we often compare the censoring indicator (0 for censored, 1 for failure) for each subject to the expected value of that indicator under the proportional hazards Cox model. That is:
+
+$$m_i = \delta_i - \hat{H}_0(t_i)exp(z_i\hat{\beta})$$
+The residual is essentially the difference between the observed value ($\delta_i$ is 1 or 0) of the censoring variable, and its expected value under the cox model. We call these residuals **martingale** residuals. We use martingale residuals to assess the functional form of a covariate
+
+The deviance residual is defined in terms of martingale residuals:
+
+$$d_i = sign(m_i)\times \sqrt{(-2\times(m_i + \delta_i log(\delta_i - m_i)))}$$
+
+Below we fit a null model and use the residuals to assess which other covariates should be in the model.
+
+
+```{r}
+null_model <- coxph(Surv(ttr, relapse) ~1, data = smoking)
+
+martingale_res <- residuals(null_model, type = "martingale")
+
+p1 <- smoking %>% 
+  mutate(martingale_res = martingale_res) %>% 
+  ggplot(aes(age, martingale_res)) +
+  geom_point() +
+  geom_smooth()
+
+p2 <- smoking %>% 
+  mutate(martingale_res = martingale_res) %>% 
+  ggplot(aes(log1p(age), martingale_res)) +
+   geom_point() +
+  geom_smooth()
+  
+p3 <- smoking %>% 
+  mutate(martingale_res = martingale_res) %>% 
+  ggplot(aes(priorAttempts, martingale_res)) +
+   geom_point() +
+  geom_smooth() 
+
+p4 <- smoking %>% 
+  mutate(martingale_res = martingale_res) %>% 
+  ggplot(aes(log1p(priorAttempts), martingale_res)) +
+   geom_point() +
+  geom_smooth() 
+
+p5 <- smoking %>% 
+  mutate(martingale_res = martingale_res) %>% 
+  ggplot(aes(longestNoSmoke, martingale_res)) +
+   geom_point() +
+  geom_smooth() 
+
+p6 <- smoking %>% 
+  mutate(martingale_res = martingale_res) %>% 
+  ggplot(aes(log1p(longestNoSmoke), martingale_res)) +
+   geom_point() +
+  geom_smooth()  
+  
+
+cowplot::plot_grid(p1, p2, p3, p4, p5, p6, ncol = 2)
+  
+```
+
+In these cases, we see indications of a non-linear relationship between the covariate and the outcome. For example, age does not seem to be linearly associated with the outcome (hence why we used a categorical version). This is a good technique (plotting martingale residuals from a null model against the covariates) for assessing the  form of a covariate.
+
+
+We will take our final stepwise model and calculate the martingale residuals and make some plots for a few covariates.
+
+
+```{r}
+martingale_res <- residuals(step_model, type = "martingale")
+
+p1 <- smoking %>% 
+  mutate(martingale_res = martingale_res) %>% 
+  ggplot(aes(age, martingale_res)) +
+   geom_point() +
+   geom_smooth() 
+
+p2 <- smoking %>% 
+  mutate(martingale_res = martingale_res) %>% 
+  ggplot(aes(grp, martingale_res)) +
+   geom_boxplot() 
+
+p3 <- smoking %>% 
+  mutate(martingale_res = martingale_res) %>% 
+  ggplot(aes(employment, martingale_res)) +
+   geom_boxplot() 
+
+cowplot::plot_grid(p1, p2, p3, ncol=1)
+
+
+```
+
+
+The residuals plotted against grp and employment show a reasonable spread across each level of the covariate. There is still evidence of non-linearity in the age variable. 
+
+
+## Checking the Proportion Hazards Assumption
+
+This is the key assumption to fitting a cox proportional hazard model. We can assess this assumption graphically with a test and with the use of residuals. 
+
+Note that the proportional hazard assumption gives us:
+
+$$S_1(t)= S_0(t)^{exp(\beta)}$$
+
+where $exp(\beta)$ is the proportional hazard constant. Taking logs gives
+
+$$log(S_1(t))= exp(\beta)\times log(S_0(t)))$$
+
+$$log(-log(S_1(t)))= \beta\times log(-log(S_0(t))))$$
+
+Here we have negated the first log before taking a second log since survival functions are less than 1. 
+
+We have seen the function $g(u) = log(-log(u))$ before when working with GLM's. This is the complementary log-log transformation.
+
+A plot of $g(S_1(t))$ and $g(S_0(t))$ against $t$ or $log(t)$ will give two parallel curves separated by $\beta$ if the proportional hazards assumption holds.
+
+
+```{r}
+plot_surv <- function(filter_level) {
+  df <- smoking %>% 
+                 dplyr::filter(grp == filter_level)
+  km<- survfit(Surv(ttr, relapse) ~ grp, data = df)
+  time <- km$time
+  surv <- km$surv
+  cloglog <- log(-log(surv))
+  log_time <- log(time)
+  return(data.frame(time, surv, cloglog, log_time, level = filter_level))
+}
+
+
+combo <- plot_surv('combination')
+patch <- plot_surv('patchOnly')
+
+combo %>% 
+  ggplot(aes(log_time, cloglog, color = "Combination")) +
+  geom_line() +
+  geom_line(data = patch,
+            aes(log_time, cloglog, color = "Patch Only"))
+```
+
+
+In this case we see relatively straight lines. 
+
+
+### Schoenfeld Residuals
+
+Schoenfeld residual plots are another useful way to assess this assumption. Schenfeld residuals are derived from the partial log likelihood function that is used to fit the model. 
+
+
+
+The Schoenfeld residuals are the individual terms of the score function, and each term is the observed value of the covariate for patient $i$ minus the expected value
+
+For an estimate $\beta$:
+
+$$r_i = z_i - \sum_{k \in R_i} z_k \cdot p(\beta, z_k) = z_i - \hat{z}(t_i)$$
+
+Here $z_i$ is a covariate and $p(\beta, z_k)$ is:
+
+
+$$p(\beta, z_k) = \frac{exp(z_k\beta)}{\sum_j \in R_k exp(z_j\beta)}$$
+
+
+A plot of theses residuals versus the covariate $z_i$ will yield a pattern of points that are centered at zero, if the proportional hazards assumption is correct. If thereare multiple covariates, then one obtains a series of residuals for each covariate. They are calculated in R as
+
+
+
+
+
+```{r}
+
+model <- coxph(Surv(ttr, relapse) ~grp + age + employment, data = smoking)
+resid_sch <- cox.zph(model)
+
+# residuals (1 for each variable)
+
+resid_sch$y %>% head()
+
+
+```
+
+
+Finally, we can get a test of proportionality by printing the results from the `cox.zph` function. 
+
+
+```{r}
+print(resid_sch)
+
+```
+
+
+We get a global test and a test for each covariate. If any of the p-values are significant, this is evidence that the proportionality assumption does not hold. 
+
+
