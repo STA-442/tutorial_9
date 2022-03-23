@@ -6,7 +6,7 @@
     <meta name="generator" content="pandoc" />
 
     
-        <meta name="date" content="2022-03-21" />
+        <meta name="date" content="2022-03-23" />
     
     <title>survival-analysis.knit</title>
 
@@ -202,7 +202,7 @@
       </ul>
     </div>
     <div id="postamble" data-toggle="wy-nav-shift" class="status">
-                  <p class="date"><span class="glyphicon glyphicon-calendar"></span> 2022-03-21</p>
+                  <p class="date"><span class="glyphicon glyphicon-calendar"></span> 2022-03-23</p>
           </div>
    </div>
      
@@ -687,9 +687,9 @@
 <p>We saw in class that the Kaplan Meier estimator, wich is a non-parametric estimator for the survival function is given by:</p>
 <p><span class="math display">\[\hat{S}(t) = \prod_{t \le T} (1 - \frac{d_i}{n_i})\]</span></p>
 <p>Where n_i is the number of subjects at risk at time <span class="math inline">\(t_i\)</span> and <span class="math inline">\(d_i\)</span> is the number who rail at time <span class="math inline">\(t_i\)</span>. We call this estimator the product limit estimator. We can obtain confidence intervals using the delta method (which give the variance of <span class="math inline">\(log(\hat{S}(t))\)</span>)</p>
-<p><span class="math display">\[var(log(\hat{S}(t))) = \sum_{t_i &lt; t} \frac{d_j}{n_j(n_j - d_j)}\]</span></p>
+<p><span class="math display">\[\text{var}\Big(\text{log }\hat{S}(t)\Big) = \sum_{t_j &lt; t} \frac{d_j}{n_j(n_j - d_j)}\]</span></p>
 <p>We use the delta method again to get the variance of S(t) itself</p>
-<p><span class="math display">\[var(\hat{S}(t)) \approx \hat{S}(t)^2 \cdot \sum_{t_i &lt; t} \frac{d_i}{n_j(n_i - d_i)}\]</span></p>
+<p><span class="math display">\[\text{var}(\hat{S}(t)) \approx \hat{S}(t)^2 \cdot \sum_{t_i &lt; t} \frac{d_i}{n_i(n_i - d_i)}\]</span></p>
 <p>Using this to obtain confidence intervals, we can often get confidence interval estimates that fall above 1 or below zero. To get around this, we often calculate confidence intervals using the complementary log-log transformation</p>
 <p><span class="math display">\[var(log(-log(\hat{S}(t)))) \approx \frac{1}{log(\hat{S}(t))^2}\sum_{t_i &lt; t} \frac{d_i}{n_i(n_i - d_i)}\]</span></p>
 <p>Let’s see an example using some fake data.</p>
